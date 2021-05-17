@@ -1,0 +1,15 @@
+deps:
+  seizer:
+    root: src/seizer.zig
+    src:
+      github:
+        user: leroycep
+        repo: seizer
+        ref: master
+  zigimg:
+    root: zigimg.zig
+    src:
+      github:
+        user: leroycep
+        repo: zigimg
+        ref: wasm

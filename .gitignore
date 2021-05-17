@@ -1,0 +1,9 @@
+.DS_Store
+.idea
+*.log
+tmp/
+zig-cache/
+.gyro
+.dir-locals.el
+deps.zig
+zig-out/
