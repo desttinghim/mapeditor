@@ -32,24 +32,6 @@ pub const Texture = struct {
         }
 
         return initFromMemory(pixelData, load_res.width, load_res.height);
-
-        // var tex: gl.GLuint = 0;
-        // gl.genTextures(1, &tex);
-        // if (tex == 0)
-        //     return error.OpenGLFailure;
-
-        // gl.bindTexture(gl.TEXTURE_2D, tex);
-        // defer gl.bindTexture(gl.TEXTURE_2D, 0);
-        // const width = @intCast(c_int, load_res.width);
-        // const height = @intCast(c_int, load_res.height);
-        // gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixelData.ptr);
-        // gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-        // gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-
-        // return @This(){
-        //     .glTexture = tex,
-        //     .size = math.Vec(2, usize).init(load_res.width, load_res.height),
-        // };
     }
 
     // Expects a byte stream
@@ -71,12 +53,6 @@ pub const Texture = struct {
             .size = math.Vec(2, u32).init(width, height),
         };
     }
-
-    // pub fn updateFromMemory(self: @This(), pixelData: []u8, width: u32, height: u32) !@This() {
-    //     gl.bindTexture(gl.TEXTURE_2D, tex);
-    //     defer gl.bindTexture(gl.TEXTURE_2D, 0);
-    //     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixelData.ptr);
-    // }
 
     pub fn updateSubImage(self: @This(), pixelData: []u8, xoffset: u32, yoffset: u32, width: u32, height: u32) void {
         const c_xoffset = @intCast(c_int, xoffset);

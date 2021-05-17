@@ -33,6 +33,7 @@ const Context = struct {
     simRender: PixelData,
     simData: ParticleSim,
     is_mouse_down: bool,
+    place: particle.SimType,
     place_x: u32,
     place_y: u32,
 };
@@ -66,6 +67,7 @@ fn init() !void {
         .simRender = simRender,
         .simData = simData,
         .is_mouse_down = false,
+        .place = .water,
         .place_x = 0,
         .place_y = 0,
     };
@@ -81,6 +83,11 @@ fn deinit() void {
 pub fn event(evt: seizer.event.Event) !void {
     switch (evt) {
         .Quit => seizer.quit(),
+        .KeyDown => |e| switch (e.key) {
+            ._1 => ctx.place = .water,
+            ._2 => ctx.place = .sand,
+            else => {},
+        },
         .MouseMotion => |e| {
             if (ctx.is_mouse_down) {
                 const sim_size = vec2f(@intToFloat(f32, ctx.simData.width), @intToFloat(f32, ctx.simData.height));
@@ -136,14 +143,12 @@ fn render(alpha: f64) !void {
 }
 
 fn update(current_time: f64, delta: f64) !void {
-    ctx.simData.set(100, 10, .sand);
-    ctx.simData.set(300, 10, .water);
     if (ctx.is_mouse_down) {
         var x = ctx.place_x - 10;
         while (x < ctx.place_x + 10) : (x += 1) {
             var y = ctx.place_y - 10;
             while (y < ctx.place_y + 10) : (y += 1){
-                ctx.simData.set(x, y, .water);
+                ctx.simData.set(x, y, ctx.place);
             }
         }
     }
