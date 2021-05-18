@@ -47,7 +47,7 @@ fn init() !void {
     var allocator = &gpa.allocator;
     var screen_size = seizer.getScreenSize().intCast(u32);
     var simRender = try PixelData.init(allocator, screen_size.x, screen_size.y);
-    var simData = try ParticleSim.init(allocator, screen_size.x, screen_size.y);
+    var simData = try ParticleSim.init(allocator, &rng, screen_size.x, screen_size.y);
 
     var i: usize = 0;
     while (i < simRender.data.len) : (i += 1) {

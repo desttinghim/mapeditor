@@ -64,17 +64,46 @@ pub const SimType = enum {
 pub const Particle = struct {
     simType: SimType,
     lifetime: u32,
-    has_updated: u32,
+    has_updated: u64,
+
+    fn has_not_updated(self: @This(), tick: u64) bool {
+        return self.lifetime < tick;
+    }
+};
+
+const ReversibleIterator = struct {
+    index: usize,
+    min: usize,
+    max: usize,
+    reverse: bool,
+
+    fn init(reverse: bool, min: usize, max: usize) @This() {
+        return @This() {
+            .index = if (reverse) max else min,
+            .max = max,
+            .min = min,
+            .reverse = reverse,
+        };
+    }
+
+    fn next(self: *@This()) ?usize {
+        const i = self.index;
+        if (i >= self.max and !self.reverse) return null;
+        if (i <= self.min and self.reverse) return null;
+        if (self.reverse) self.index -= 1 else self.index += 1;
+        return i;
+    }
 };
 
 pub const ParticleSim = struct {
     data: []Particle,
     allocator: *std.mem.Allocator,
+    rng: *std.rand.DefaultPrng,
     width: u32,
     height: u32,
     tick: u64,
 
-    pub fn init(allocator: *std.mem.Allocator, width: u32, height: u32) !@This() {
+    pub fn init(allocator: *std.mem.Allocator, rng: *std.rand.DefaultPrng, width: u32, height: u32) !@This() {
         var data = try allocator.alloc(Particle, width * height);
         for (data) |*datum, i| {
             datum.* = .{.simType = .air, .lifetime = 0, .has_updated = 0};
@@ -82,6 +111,7 @@ pub const ParticleSim = struct {
         return @This(){
             .data = data,
             .allocator = allocator,
+            .rng = rng,
             .width = width,
             .height = height,
             .tick = 0,
@@ -98,61 +128,61 @@ pub const ParticleSim = struct {
     }
 
     pub fn update(self: *@This()) void {
-        const prefer = self.tick % 2;
+        const preferLeft = self.rng.random.boolean();
         self.tick += 1;
         var y: usize = self.height - 2;
         while (y > 1) : (y -= 1) {
-            var x: usize = 1;
-            while (x < self.width - 1) : (x += 1) {
+            var x_iter = ReversibleIterator.init(preferLeft, 2, self.width - 2);
+            while (x_iter.next()) |x| {
                 const i = self.get_i(x, y);
-                const down = self.get_i(x, y + 1);
-                const left = if (prefer == 0) self.get_i(x - 1, y) else self.get_i(x + 1, y);
-                const right = if (prefer == 0) self.get_i(x + 1, y) else self.get_i(x - 1, y);
-                const downleft = if (prefer == 0) self.get_i(x - 1, y + 1) else self.get_i(x + 1, y +  1);
-                const downright = if (prefer == 0) self.get_i(x + 1, y + 1) else self.get_i(x - 1, y +  1);
+                const down_i = self.get_i(x, y + 1);
+                const left_i = if (preferLeft) self.get_i(x - 1, y) else self.get_i(x + 1, y);
+                const right_i = if (preferLeft) self.get_i(x + 1, y) else self.get_i(x - 1, y);
+                const downleft_i = if (preferLeft) self.get_i(x - 1, y + 1) else self.get_i(x + 1, y +  1);
+                const downright_i = if (preferLeft) self.get_i(x + 1, y + 1) else self.get_i(x - 1, y +  1);
                 switch(self.data[i].simType) {
                     .air  => {},
                     .sand => {
-                        if (!self.data[down].simType.is_solid()) {
-                            var t = self.data[down];
-                            self.data[down] = self.data[i];
-                            self.data[i] = t;
-                        } else if (!self.data[downleft].simType.is_solid()) {
-                            var t = self.data[downleft];
-                            self.data[downleft] = self.data[i];
-                            self.data[i] = t;
-                        } else if (!self.data[downright].simType.is_solid()) {
-                            var t = self.data[downright];
-                            self.data[downright] = self.data[i];
-                            self.data[i] = t;
+                        const down = self.data[down_i];
+                        const downleft = self.data[downleft_i];
+                        const downright = self.data[downright_i];
+                        if (!down.simType.is_solid() and down.has_not_updated(self.tick)) {
+                            self.swap(i, down_i);
+                        } else if (!downleft.simType.is_solid() and downleft.has_not_updated(self.tick)) {
+                            self.swap(i, downleft_i);
+                        } else if (!downright.simType.is_solid() and downright.has_not_updated(self.tick)) {
+                            self.swap(i, downright_i);
                         }
                     },
                     .water => {
-                        if (self.data[down].simType.is_gas()) {
-                            var t = self.data[down];
-                            self.data[down] = self.data[i];
-                            self.data[i] = t;
-                        } else if (self.data[downleft].simType.is_gas()) {
-                            var t = self.data[downleft];
-                            self.data[downleft] = self.data[i];
-                            self.data[i] = t;
-                        } else if (self.data[downright].simType.is_gas()) {
-                            var t = self.data[downright];
-                            self.data[downright] = self.data[i];
-                            self.data[i] = t;
-                        } else if (self.data[left].simType.is_gas()) {
-                            var t = self.data[left];
-                            self.data[left] = self.data[i];
-                            self.data[i] = t;
-                        } else if (self.data[right].simType.is_gas()) {
-                            var t = self.data[right];
-                            self.data[right] = self.data[i];
-                            self.data[i] = t;
+                        const down = self.data[down_i];
+                        const downleft = self.data[downleft_i];
+                        const downright = self.data[downright_i];
+                        const left = self.data[left_i];
+                        const right = self.data[right_i];
+                        if (down.simType.is_gas() and down.has_not_updated(self.tick)) {
+                            self.swap(i, down_i);
+                        } else if (downleft.simType.is_gas() and downleft.has_not_updated(self.tick)) {
+                            self.swap(i, downleft_i);
+                        } else if (downright.simType.is_gas() and downright.has_not_updated(self.tick)) {
+                            self.swap(i, downright_i);
+                        } else if (left.simType.is_gas() and left.has_not_updated(self.tick)) {
+                            self.swap(i, left_i);
+                        } else if (right.simType.is_gas() and right.has_not_updated(self.tick)) {
+                            self.swap(i, right_i);
                         }
                     },
                 }
             }
         }
+    }
+
+    fn swap(self: *@This(), index1: usize, index2: usize) void {
+        const t = self.data[index1];
+        self.data[index1] = self.data[index2];
+        self.data[index2] = t;
+        self.data[index1].has_updated = self.tick;
+        self.data[index2].has_updated = self.tick;
     }
 
     /// Render sim into tex
@@ -169,6 +199,8 @@ pub const ParticleSim = struct {
     }
 
     fn get_i(self: @This(), x: usize, y: usize) usize {
+        std.debug.assert(x <= self.width);
+        std.debug.assert(y <= self.height);
         return x + y * self.width;
     }
 };
