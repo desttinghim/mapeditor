@@ -4,9 +4,13 @@ const gl = seizer.gl;
 const FlatRenderer = @import("flat_render.zig").FlatRenderer;
 const FontRenderer = @import("font_render.zig").FontRenderer;
 const Texture = @import("texture.zig").Texture;
+const RGBA = @import("texture.zig").RGBA;
+const PixelData = @import("texture.zig").PixelData;
 const math = seizer.math;
 const Vec2f = math.Vec(2, f32);
 const vec2f = Vec2f.init;
+const Vec2i = math.Vec(2, i32);
+const vec2i = Vec2i.init;
 
 pub fn main() anyerror!void {
     seizer.run(.{
@@ -18,27 +22,23 @@ pub fn main() anyerror!void {
     });
 }
 
-var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-var rng: std.rand.DefaultPrng = undefined;
-
-const particle = @import("particle.zig");
-const PixelData = particle.PixelData;
-const ParticleSim = particle.ParticleSim;
-
 const Context = struct {
     allocator: *std.mem.Allocator,
     rng: std.rand.DefaultPrng,
     flat: FlatRenderer,
-    simTexture: Texture,
-    simRender: PixelData,
-    simData: ParticleSim,
-    is_mouse_down: bool,
-    place: particle.SimType,
-    place_x: u32,
-    place_y: u32,
+
+    tileTex: Texture,
+    tileBMP: PixelData,
+    isMouseDown: bool = false,
+    prevPos: Vec2i = vec2i(0, 0),
+    mousePos: Vec2i = vec2i(0, 0),
 };
 
+var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+var rng: std.rand.DefaultPrng = undefined;
 var ctx: Context = undefined;
+
+const tileMapSize = math.Vec(2, u32).init(1024, 1024);
 
 fn init() !void {
     var seed: u64 = undefined;
@@ -46,36 +46,24 @@ fn init() !void {
     rng = std.rand.DefaultPrng.init(seed);
     var allocator = &gpa.allocator;
     var screen_size = seizer.getScreenSize().intCast(u32);
-    var simRender = try PixelData.init(allocator, screen_size.x, screen_size.y);
-    var simData = try ParticleSim.init(allocator, &rng, screen_size.x, screen_size.y);
 
-    var i: usize = 0;
-    while (i < simRender.data.len) : (i += 1) {
-        simRender.data[i].r = 0xff;
-        simRender.data[i].g = 0x00;
-        simRender.data[i].b = 0x00;
-        simRender.data[i].a = 0xff;
+    var pixel_data = try PixelData.init(allocator, tileMapSize.x, tileMapSize.y);
+
+    for (pixel_data.data) |*pixel, i| {
+        pixel.* = .{ .r = 0xFF, .g = 0xFF, .b = 0xFF, .a = 0xFF };
     }
-
-    // std.log.info("{}", .{simRender});
 
     ctx = .{
         .allocator = allocator,
         .rng = rng,
         .flat = try FlatRenderer.init(ctx.allocator, seizer.getScreenSize().intToFloat(f32)),
-        .simTexture = try Texture.initFromMemory(simRender.as_bytes(), screen_size.x, screen_size.y),
-        .simRender = simRender,
-        .simData = simData,
-        .is_mouse_down = false,
-        .place = .water,
-        .place_x = 0,
-        .place_y = 0,
+        .tileTex = try Texture.initFromMemory(pixel_data.asBytes(), tileMapSize.x, tileMapSize.y),
+        .tileBMP = pixel_data,
     };
 }
 
 fn deinit() void {
-    ctx.simRender.deinit();
-    ctx.simData.deinit();
+    ctx.tileBMP.deinit();
     ctx.flat.deinit();
     _ = gpa.deinit();
 }
@@ -84,41 +72,21 @@ pub fn event(evt: seizer.event.Event) !void {
     switch (evt) {
         .Quit => seizer.quit(),
         .KeyDown => |e| switch (e.key) {
-            ._1 => ctx.place = .water,
-            ._2 => ctx.place = .sand,
             else => {},
         },
         .MouseMotion => |e| {
-            if (ctx.is_mouse_down) {
-                const sim_size = vec2f(@intToFloat(f32, ctx.simData.width), @intToFloat(f32, ctx.simData.height));
-                const scale = sim_size.divv(seizer.getScreenSize().intToFloat(f32));
-                const adjusted = e.pos.intToFloat(f32).mulv(scale).floatToInt(u32);
-                ctx.place_x = adjusted.x;
-                ctx.place_y = adjusted.y;
-                // ctx.simData.set(x, y, .water);
+            if (ctx.isMouseDown) {
+                ctx.mousePos = e.pos;
             }
         },
         .MouseButtonDown => |e| {
-            switch(e.button) {
-                .Left => ctx.is_mouse_down = true,
-                else => {},
-            }
-            const sim_size = vec2f(@intToFloat(f32, ctx.simData.width), @intToFloat(f32, ctx.simData.height));
-            const scale = sim_size.divv(seizer.getScreenSize().intToFloat(f32));
-            const adjusted = e.pos.intToFloat(f32).mulv(scale).floatToInt(u32);
-            ctx.place_x = adjusted.x;
-            ctx.place_y = adjusted.y;
+            ctx.isMouseDown = true;
+            ctx.mousePos = e.pos;
+            ctx.prevPos = e.pos;
         },
         .MouseButtonUp => |e| {
-            switch(e.button) {
-                .Left => ctx.is_mouse_down = false,
-                else => {},
-            }
-            const sim_size = vec2f(@intToFloat(f32, ctx.simData.width), @intToFloat(f32, ctx.simData.height));
-            const scale = sim_size.divv(seizer.getScreenSize().intToFloat(f32));
-            const adjusted = e.pos.intToFloat(f32).mulv(scale).floatToInt(u32);
-            ctx.place_x = adjusted.x;
-            ctx.place_y = adjusted.y;
+            ctx.isMouseDown = false;
+            ctx.mousePos = e.pos;
         },
         else => {},
     }
@@ -132,25 +100,21 @@ fn render(alpha: f64) !void {
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.viewport(0, 0, screen_size.x, screen_size.y);
 
-    ctx.simData.render(ctx.simRender.data);
-    ctx.simTexture.update(ctx.simRender.as_bytes());
-
     ctx.flat.setSize(screen_size_f);
 
-    ctx.flat.drawTexture(ctx.simTexture, vec2f(0,0), screen_size_f);
+    ctx.flat.drawTexture(ctx.tileTex, vec2f(0, 0), tileMapSize.intToFloat(f32));
 
     ctx.flat.flush();
 }
 
 fn update(current_time: f64, delta: f64) !void {
-    if (ctx.is_mouse_down) {
-        var x = ctx.place_x - 10;
-        while (x < ctx.place_x + 10) : (x += 1) {
-            var y = ctx.place_y - 10;
-            while (y < ctx.place_y + 10) : (y += 1){
-                ctx.simData.set(x, y, ctx.place);
-            }
-        }
+    if (ctx.isMouseDown) {
+        const lpos = ctx.prevPos.intCast(u32);
+        const pos = ctx.mousePos.intCast(u32);
+        const i = @intCast(usize, ctx.mousePos.x + (ctx.mousePos.y * tileMapSize.x));
+        const color = .{ .r = 0xFF, .g = 0x00, .b = 0x00, .a = 0xFF };
+        ctx.tileBMP.drawLine(lpos.x, lpos.y, pos.x, pos.y, color);
+        ctx.tileTex.updateSubImage(ctx.tileBMP.asBytes(), 0, 0, tileMapSize.x, tileMapSize.y);
+        ctx.prevPos = ctx.mousePos;
     }
-    ctx.simData.update();
 }

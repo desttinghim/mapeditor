@@ -47,7 +47,7 @@ pub const Texture = struct {
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, c_width, c_height, 0, gl.RGBA, gl.UNSIGNED_BYTE, pixelData.ptr);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-        
+
         return @This(){
             .glTexture = tex,
             .size = math.Vec(2, u32).init(width, height),
@@ -67,5 +67,123 @@ pub const Texture = struct {
     /// Update image assuming the new pixel data has the same dimensions
     pub fn update(self: @This(), pixelData: []u8) void {
         self.updateSubImage(pixelData, 0, 0, self.size.x, self.size.y);
+    }
+};
+
+pub const RGBA = packed struct {
+    r: u8,
+    g: u8,
+    b: u8,
+    a: u8,
+};
+
+/// CPU Pixel buffer, can be modified
+pub const PixelData = struct {
+    allocator: *std.mem.Allocator,
+    data: []RGBA,
+    width: u32,
+    height: u32,
+
+    pub fn init(allocator: *std.mem.Allocator, width: u32, height: u32) !@This() {
+        var pixels = @intCast(usize, width * height);
+        return @This(){
+            .allocator = allocator,
+            .data = try allocator.alloc(RGBA, pixels),
+            .width = width,
+            .height = height,
+        };
+    }
+
+    pub fn deinit(self: @This()) void {
+        self.allocator.free(self.data);
+    }
+
+    pub fn asBytes(self: @This()) []u8 {
+        var byte_ptr = @ptrCast([*]u8, self.data);
+        var byte_slice = byte_ptr[0 .. self.data.len * @sizeOf(RGBA)];
+        return byte_slice;
+    }
+
+    pub fn drawPixel(self: @This(), x: u32, y: u32, color: RGBA) void {
+        const index = x + (y * self.width);
+        self.data[index] = color;
+    }
+
+    fn _drawPixel(self: @This(), x: i32, y: i32, color: RGBA) void {
+        const index = @intCast(u32, x) + (@intCast(u32, y) * self.width);
+        self.data[index] = color;
+    }
+
+    pub fn drawLine(self: @This(), x0: u32, y0: u32, x1: u32, y1: u32, color: RGBA) void {
+        const xmin = @intCast(i32, std.math.min(x0, x1));
+        const xmax = @intCast(i32, std.math.max(x0, x1));
+        const ymin = @intCast(i32, std.math.min(y0, y1));
+        const ymax = @intCast(i32, std.math.max(y0, y1));
+        const x0i = @intCast(i32, x0);
+        const x1i = @intCast(i32, x1);
+        const y0i = @intCast(i32, y0);
+        const y1i = @intCast(i32, y1);
+
+        if (ymax - ymin < xmax - xmin) {
+            if (x0 > x1) {
+                self._drawLineLow(x1i, y1i, x0i, y0i, color);
+            } else {
+                self._drawLineLow(x0i, y0i, x1i, y1i, color);
+            }
+        } else {
+            if (y0 > y1) {
+                self._drawLineHigh(x1i, y1i, x0i, y0i, color);
+            } else {
+                self._drawLineHigh(x0i, y0i, x1i, y1i, color);
+            }
+        }
+    }
+
+    fn _drawLineLow(self: @This(), xmin: i32, ymin: i32, xmax: i32, ymax: i32, color: RGBA) void {
+        var dx = xmax - xmin;
+        var dy = ymax - ymin;
+
+        var yi: i32 = 1;
+        if (dy < 0) {
+            yi = -1;
+            dy = -dy;
+        }
+
+        var D = 2 * dy - dx;
+        var y: i32 = ymin;
+        var x: i32 = xmin;
+        while (x < xmax) : (x += 1) {
+            self._drawPixel(x, y, color);
+            if (D > 0) {
+                y += yi;
+                D += (2 * (dy - dx));
+            } else {
+                D += 2 * dy;
+            }
+        }
+    }
+
+    fn _drawLineHigh(self: @This(), xmin: i32, ymin: i32, xmax: i32, ymax: i32, color: RGBA) void {
+        var dx = xmax - xmin;
+        var dy = ymax - ymin;
+
+        var xi: i32 = 1;
+        if (dx < 0) {
+            xi = -1;
+            dx = -dx;
+        }
+
+        var D = 2 * dx - dy;
+        var y: i32 = ymin;
+        var x: i32 = xmin;
+        while (y < ymax) : (y += 1) {
+            self._drawPixel(x, y, color);
+            if (D > 0) {
+                x += xi;
+                D += (2 * (dx - dy));
+            } else {
+                D += 2 * dx;
+            }
+        }
     }
 };
