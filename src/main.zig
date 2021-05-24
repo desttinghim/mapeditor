@@ -80,6 +80,31 @@ const TileMap = struct {
     }
 };
 
+const Color = struct {
+    const red = RGBA{ .r = 0xFF, .g = 0x00, .b = 0x00, .a = 0xFF };
+    const green = RGBA{ .r = 0x00, .g = 0xFF, .b = 0x00, .a = 0xFF };
+    const blue = RGBA{ .r = 0x00, .g = 0x00, .b = 0xFF, .a = 0xFF };
+    const black = RGBA{ .r = 0x00, .g = 0x00, .b = 0x00, .a = 0xFF };
+    const white = RGBA{ .r = 0xFF, .g = 0xFF, .b = 0xFF, .a = 0xFF };
+};
+
+const Pan = struct {
+    mouse: Vec2i,
+    map: Vec2i,
+};
+
+const Draw = struct {
+    prevPos: Vec2i,
+    color: RGBA,
+};
+
+const Activity = enum {
+    idle,
+    drawing,
+    tiling,
+    panning,
+};
+
 const Context = struct {
     allocator: *std.mem.Allocator,
     rng: std.rand.DefaultPrng,
@@ -87,9 +112,11 @@ const Context = struct {
 
     tileMap: TileMap,
     tileBMP: PixelData,
-    isMouseDown: bool = false,
-    prevPos: Vec2i = vec2i(0, 0),
     mousePos: Vec2i = vec2i(0, 0),
+    activity: Activity,
+    drawing: Draw,
+    panning: Pan,
+    tiling: u32,
 };
 
 var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -118,6 +145,10 @@ fn init() !void {
         .flat = try FlatRenderer.init(ctx.allocator, seizer.getScreenSize().intToFloat(f32)),
         .tileMap = try TileMap.init(ctx.allocator, vec2i(0, 0), vec2u(32, 32), vec2u(20, 20), texture),
         .tileBMP = pixel_data,
+        .activity = .idle,
+        .drawing = .{ .prevPos = vec2i(0, 0), .color = Color.black },
+        .panning = .{ .mouse = vec2i(0, 0), .map = vec2i(0, 0) },
+        .tiling = 0,
     };
 }
 
@@ -131,19 +162,23 @@ fn deinit() void {
 pub fn event(evt: seizer.event.Event) !void {
     switch (evt) {
         .Quit => seizer.quit(),
-        .KeyDown => |e| switch (e.key) {
-            else => {},
+        .KeyDown => |e| {
+            switch (e.key) {
+                ._1 => ctx.drawing.color = Color.white,
+                ._2 => ctx.drawing.color = Color.black,
+                ._3 => ctx.drawing.color = Color.red,
+                ._4 => ctx.drawing.color = Color.green,
+                ._5 => ctx.drawing.color = Color.blue,
+                else => {},
+            }
         },
         .MouseWheel => |e| {
-            std.log.warn("{}", .{e});
-            const tile_size = ctx.tileMap.tile_size.intCast(i32);
-            const pos = vec2i(@divTrunc(ctx.mousePos.x, tile_size.x), @divTrunc(ctx.mousePos.y, tile_size.y)).intCast(u32);
             if (e.y > 0) {
-                ctx.tileMap.set(pos, ctx.tileMap.get(pos) + 1);
+                ctx.tiling += 1;
             }
             if (e.y < 0) {
-                if (ctx.tileMap.get(pos) > 0) {
-                    ctx.tileMap.set(pos, ctx.tileMap.get(pos) - 1);
+                if (ctx.tiling > 0) {
+                    ctx.tiling -= 1;
                 }
             }
         },
@@ -151,13 +186,30 @@ pub fn event(evt: seizer.event.Event) !void {
             ctx.mousePos = e.pos;
         },
         .MouseButtonDown => |e| {
-            ctx.isMouseDown = true;
             ctx.mousePos = e.pos;
-            ctx.prevPos = e.pos;
+            switch (ctx.activity) {
+                .idle => {
+                    switch (e.button) {
+                        .Left => {
+                            ctx.drawing = .{ .prevPos = e.pos, .color = Color.black };
+                            ctx.activity = .drawing;
+                        },
+                        .Middle => {
+                            ctx.panning = .{ .mouse = e.pos, .map = ctx.tileMap.pos };
+                            ctx.activity = .panning;
+                        },
+                        .Right => {
+                            ctx.activity = .tiling;
+                        },
+                        else => {},
+                    }
+                },
+                else => {},
+            }
         },
         .MouseButtonUp => |e| {
-            ctx.isMouseDown = false;
             ctx.mousePos = e.pos;
+            ctx.activity = .idle;
         },
         else => {},
     }
@@ -191,12 +243,27 @@ fn render(alpha: f64) !void {
 }
 
 fn update(current_time: f64, delta: f64) !void {
-    if (ctx.isMouseDown) {
-        const lpos = ctx.prevPos.intCast(u32);
-        const pos = ctx.mousePos.intCast(u32);
-        const color = .{ .r = 0x00, .g = 0x00, .b = 0x00, .a = 0xFF };
-        ctx.tileBMP.drawLine(lpos.x, lpos.y, pos.x, pos.y, color);
-        ctx.tileMap.texture.updateSubImage(ctx.tileBMP.asBytes(), 0, 0, ctx.tileMap.texture.size.x, ctx.tileMap.texture.size.y);
-        ctx.prevPos = ctx.mousePos;
+    const activity = ctx.activity;
+    switch (activity) {
+        .drawing => {
+            const lpos = ctx.drawing.prevPos.intCast(u32);
+            const pos = ctx.mousePos.intCast(u32);
+            const color = ctx.drawing.color;
+            ctx.tileBMP.drawLine(lpos.x, lpos.y, pos.x, pos.y, color);
+            ctx.tileMap.texture.updateSubImage(ctx.tileBMP.asBytes(), 0, 0, ctx.tileMap.texture.size.x, ctx.tileMap.texture.size.y);
+            ctx.drawing.prevPos = ctx.mousePos;
+        },
+        .tiling => {
+            const tile_size = ctx.tileMap.tile_size.intCast(i32);
+            const pos = vec2i(@divTrunc(ctx.mousePos.x, tile_size.x), @divTrunc(ctx.mousePos.y, tile_size.y)).intCast(u32);
+            ctx.tileMap.set(pos, ctx.tiling);
+        },
+        .panning => {
+            const mousePos = ctx.panning.mouse;
+            const mapPos = ctx.panning.map;
+            const diff = mousePos.subv(ctx.mousePos);
+            ctx.tileMap.pos = mapPos.subv(diff);
+        },
+        .idle => {},
     }
 }
