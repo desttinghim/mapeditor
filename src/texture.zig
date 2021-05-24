@@ -3,10 +3,16 @@ const seizer = @import("seizer");
 const zigimg = @import("zigimg");
 const gl = seizer.gl;
 const math = seizer.math;
+const Vec2f = math.Vec(2, f32);
+const vec2f = Vec2f.init;
+const Vec2i = math.Vec(2, i32);
+const vec2i = Vec2i.init;
+const Vec2u = math.Vec(2, u32);
+const vec2u = Vec2u.init;
 
 pub const Texture = struct {
     glTexture: gl.GLuint,
-    size: math.Vec(2, u32),
+    size: Vec2u,
 
     pub fn initFromFile(alloc: *std.mem.Allocator, filePath: []const u8) !@This() {
         const image_contents = try seizer.fetch(alloc, filePath, 50000);
@@ -81,16 +87,14 @@ pub const RGBA = packed struct {
 pub const PixelData = struct {
     allocator: *std.mem.Allocator,
     data: []RGBA,
-    width: u32,
-    height: u32,
+    size: Vec2u,
 
     pub fn init(allocator: *std.mem.Allocator, width: u32, height: u32) !@This() {
         var pixels = @intCast(usize, width * height);
         return @This(){
             .allocator = allocator,
             .data = try allocator.alloc(RGBA, pixels),
-            .width = width,
-            .height = height,
+            .size = vec2u(width, height),
         };
     }
 
@@ -105,12 +109,12 @@ pub const PixelData = struct {
     }
 
     pub fn drawPixel(self: @This(), x: u32, y: u32, color: RGBA) void {
-        const index = x + (y * self.width);
+        const index = x + (y * self.size.x);
         self.data[index] = color;
     }
 
     fn _drawPixel(self: @This(), x: i32, y: i32, color: RGBA) void {
-        const index = @intCast(u32, x) + (@intCast(u32, y) * self.width);
+        const index = @intCast(u32, x) + (@intCast(u32, y) * self.size.x);
         self.data[index] = color;
     }
 
